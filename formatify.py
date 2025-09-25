@@ -141,7 +141,8 @@ class BurpExtender(IBurpExtender, ITab, IContextMenuFactory, IExtensionStateList
         dropdownPanel = JPanel(FlowLayout(FlowLayout.CENTER))
         self._conversionOptions = JComboBox([
             "JavaScript Fetch",
-            "cURL Command",
+            "cURL Command (Linux)",
+            "cURL Command (Windows)",
             "Python Requests",
             "Python aiohttp",
             "Node.js Axios",
@@ -150,7 +151,9 @@ class BurpExtender(IBurpExtender, ITab, IContextMenuFactory, IExtensionStateList
             "FFUF Command",
             "Java OkHttp",
             "CSRF Payload Builder",
-            "CORS Exploit PoC"
+            "CORS Exploit PoC",
+            "Clickjacking PoC",
+            "Postman Collection"
         ])
         self._conversionOptions.setPreferredSize(Dimension(200, 30))
         self._conversionOptions.setFont(Font("SansSerif", Font.PLAIN, 13))
@@ -403,8 +406,10 @@ class BurpExtender(IBurpExtender, ITab, IContextMenuFactory, IExtensionStateList
 
             if conversion_type == "JavaScript Fetch":
                 result = self._to_javascript_fetch(method, url, headers, body)
-            elif conversion_type == "cURL Command":
+            elif conversion_type == "cURL Command (Linux)":
                 result = self._to_curl(method, url, headers, body)
+            elif conversion_type == "cURL Command (Windows)":
+                result = self._to_curl_windows(method, url, headers, body)
             elif conversion_type == "Python Requests":
                 result = self._to_python_requests(method, url, headers, body)
             elif conversion_type == "Python aiohttp":
@@ -423,6 +428,10 @@ class BurpExtender(IBurpExtender, ITab, IContextMenuFactory, IExtensionStateList
                 result = self._to_csrf_payload(method, url, headers, body)
             elif conversion_type == "CORS Exploit PoC":
                 result = self._to_cors_exploit(method, url, headers, body)
+            elif conversion_type == "Clickjacking PoC":
+                result = self._to_clickjacking_poc(method, url, headers, body)
+            elif conversion_type == "Postman Collection":
+                result = self._to_postman_collection(method, url, headers, body)
             else:
                 result = "Conversion type not implemented"
 
@@ -444,9 +453,7 @@ class BurpExtender(IBurpExtender, ITab, IContextMenuFactory, IExtensionStateList
         SwingUtilities.invokeLater(OutputUpdater(self, text))
 
     def _to_javascript_fetch(self, method, url, headers, body):
-        """
-        Convert to JavaScript Fetch API
-        """
+        """Convert to JavaScript Fetch API."""
         headers_str = ",\n    ".join(['"' + k + '": "' + v.replace('"', '\\"') + '"' for k, v in headers.items()])
 
         content_type = headers.get("Content-Type", "")
@@ -479,9 +486,7 @@ fetch("%s", {
         return fetch_code
 
     def _to_curl(self, method, url, headers, body):
-        """
-        Convert to cURL command
-        """
+        """Convert to cURL command."""
         # Build headers with proper escaping and ensure no truncation
         header_lines = []
         for k, v in headers.items():
@@ -509,10 +514,30 @@ fetch("%s", {
 
         return curl_cmd
 
+    def _to_curl_windows(self, method, url, headers, body):
+        """Generate a Windows CMD-friendly cURL command (caret continuations, double quotes)."""
+        header_lines = []
+        for k, v in headers.items():
+            if k.lower() in ['accept-encoding', 'content-length', 'host']:
+                continue
+            escaped_value = str(v).replace('"', '""')
+            header_lines.append('-H "' + k + ': ' + escaped_value + '"')
+
+        # Join headers with Windows continuation (caret at end of line)
+        headers_str = " ^\n  ".join(header_lines)
+
+        data_str = ""
+        if body and body.strip():
+            # For CMD, prefer --data-raw with double-quoted string; escape internal quotes by doubling them
+            escaped_body = body.strip().replace('"', '""')
+            data_str = " ^\n  --data-raw \"%s\"" % escaped_body
+
+        curl_cmd = "curl -L --max-time 30 --connect-timeout 10 ^\n  -X %s ^\n  %s%s ^\n  \"%s\"" % (method, headers_str, data_str, url)
+
+        return curl_cmd
+
     def _to_python_requests(self, method, url, headers, body):
-        """
-        Convert to Python Requests
-        """
+        """Convert to Python Requests."""
         headers_str = ",\n    ".join(['"' + k + '": "' + v.replace('"', '\\"') + '"' for k, v in headers.items()])
 
         content_type = headers.get("Content-Type", "")
@@ -552,9 +577,7 @@ print(response.text)
         return python_code
 
     def _to_python_aiohttp(self, method, url, headers, body):
-        """
-        Convert to Python aiohttp
-        """
+        """Convert to Python aiohttp."""
         headers_str = ",\n        ".join(['"' + k + '": "' + v.replace('"', '\\"') + '"' for k, v in headers.items()])
 
         content_type = headers.get("Content-Type", "")
@@ -594,9 +617,7 @@ asyncio.run(main())
         return aiohttp_code
 
     def _to_nodejs_axios(self, method, url, headers, body):
-        """
-        Convert to Node.js Axios
-        """
+        """Convert to Node.js Axios."""
         headers_str = ",\n    ".join(['"' + k + '": "' + v.replace('"', '\\"') + '"' for k, v in headers.items()])
 
         content_type = headers.get("Content-Type", "")
@@ -638,9 +659,7 @@ axios(config)
         return axios_code
 
     def _to_go_http(self, method, url, headers, body):
-        """
-        Convert to Go http package
-        """
+        """Convert to Go http package."""
         headers_str = "\n\t".join(['req.Header.Add("' + k + '", "' + v.replace('"', '\\"') + '")' for k, v in headers.items()])
 
         if body and body.strip():
@@ -701,9 +720,7 @@ func main() {%s
         return go_code
 
     def _to_powershell(self, method, url, headers, body):
-        """
-        Convert to PowerShell
-        """
+        """Convert to PowerShell."""
         headers_str = "\n".join(['$headers.Add("' + k + '", "' + v.replace('"', '\\"') + '")' for k, v in headers.items()])
 
         if body and body.strip():
@@ -726,9 +743,7 @@ Write-Host $response.Content
         return powershell_code
 
     def _to_ffuf(self, method, url, headers, body):
-        """
-        Convert to FFUF command for fuzzing
-        """
+        """Convert to FFUF command for fuzzing."""
         # Create fuzz URL - add FUZZ parameter intelligently
         if "?" in url:
             fuzz_url = url + "&FUZZ=1"  # Add as additional parameter
@@ -768,9 +783,7 @@ Write-Host $response.Content
         return ffuf_cmd
 
     def _to_java_okhttp(self, method, url, headers, body):
-        """
-        Convert to Java OkHttp
-        """
+        """Convert to Java OkHttp."""
         headers_str = "\n        ".join(['.addHeader("' + k + '", "' + v.replace('"', '\\"') + '")' for k, v in headers.items()])
 
         content_type = headers.get("Content-Type", "text/plain")
@@ -808,9 +821,7 @@ public class HttpRequest {
         return java_code
 
     def _to_csrf_payload(self, method, url, headers, body):
-        """
-        Create a CSRF payload
-        """
+        """Create a CSRF payload."""
         form_fields = ""
         content_type = headers.get("Content-Type", "")
 
@@ -879,9 +890,7 @@ public class HttpRequest {
         return csrf_html
 
     def _to_cors_exploit(self, method, url, headers, body):
-        """
-        Create a CORS exploit proof of concept
-        """
+        """Create a CORS exploit proof of concept."""
         # Build headers for the request
         request_headers = {}
         for k, v in headers.items():
@@ -987,6 +996,137 @@ public class HttpRequest {
 </html>
 """ % (url, url, method, headers_js, body_js)
         return cors_html
+
+    def _to_clickjacking_poc(self, method, url, headers, body):
+        """Create a Clickjacking proof of concept."""
+        clickjack_html = """<!-- Clickjacking PoC by Formatify -->
+<html>
+<head>
+    <title>Clickjacking PoC</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-ancestors *;">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #5bc0de; }
+        .container { position: relative; width: 100%%; max-width: 1200px; margin: 0 auto; }
+        .note { margin: 10px 0 20px; color: #555; }
+        .frame-wrap { position: relative; width: 100%%; height: 800px; border: 1px solid #ccc; overflow: hidden; }
+        /* The victim site */
+        iframe#victim {
+            width: 1200px; /* adjust to align target control under the lure */
+            height: 1200px;
+            border: 0;
+            opacity: 0.1; /* make it nearly invisible to simulate clickjacking */
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: auto; /* allow clicks to pass to the iframe */
+        }
+        /* The lure button positioned above (visible) */
+        .lure {
+            position: absolute;
+            top: 150px; /* adjust to align over target button/link */
+            left: 200px;
+            z-index: 1000;
+            background: #5bc0de;
+            color: #fff;
+            border: none;
+            padding: 12px 18px;
+            border-radius: 6px;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+        .lure:hover { background: #31b0d5; }
+        .tips { font-size: 14px; color: #777; margin-top: 10px; }
+        .warn { color: #d9534f; }
+    </style>
+</head>
+<body>
+    <h1>Clickjacking Proof of Concept</h1>
+    <div class="note">
+        This PoC overlays a nearly transparent iframe pointing to <strong>%s</strong> beneath a visible lure button.
+        If the site is vulnerable (no X-Frame-Options and frame-ancestors not set), clicking the button will actually click
+        the underlying control in the framed site.
+    </div>
+
+    <div class="container">
+        <div class="frame-wrap">
+            <button class="lure" onclick="alert('If the underlying control is aligned, your click also hit the hidden frame. Adjust offsets to demonstrate.')">Claim Your Prize</button>
+            <iframe id="victim" src="%s"></iframe>
+        </div>
+        <div class="tips">
+            Tip: Adjust the iframe size and the lure button position (top/left) to align over a sensitive action (e.g., Delete, Transfer, Approve).
+            <br>
+            <span class="warn">If the frame is blocked (blank or console shows frame-ancestors / X-Frame-Options), the application may not be vulnerable.</span>
+        </div>
+    </div>
+</body>
+</html>
+""" % (url, url)
+        return clickjack_html
+
+    def _to_postman_collection(self, method, url, headers, body):
+        """Generate a Postman Collection JSON for the current request."""
+        # Build headers array for Postman
+        pm_headers = []
+        for k, v in headers.items():
+            # Skip headers that are auto-managed by clients
+            if k.lower() in ['content-length']:
+                continue
+            pm_headers.append({
+                "key": k,
+                "value": v
+            })
+
+        # Determine body mode
+        content_type = headers.get("Content-Type", "")
+        body_obj = None
+        if body and body.strip():
+            if "application/json" in content_type.lower():
+                body_obj = {
+                    "mode": "raw",
+                    "raw": body,
+                    "options": {"raw": {"language": "json"}}
+                }
+            elif "application/x-www-form-urlencoded" in content_type.lower():
+                try:
+                    form_params = []
+                    for part in body.split("&"):
+                        if "=" in part:
+                            name, value = part.split("=", 1)
+                        else:
+                            name, value = part, ""
+                        form_params.append({"key": name, "value": value, "type": "text"})
+                    body_obj = {"mode": "urlencoded", "urlencoded": form_params}
+                except:
+                    body_obj = {"mode": "raw", "raw": body}
+            else:
+                body_obj = {"mode": "raw", "raw": body}
+
+        # Build request object
+        request_obj = {
+            "method": method,
+            "header": pm_headers,
+            "url": url
+        }
+        if body_obj:
+            request_obj["body"] = body_obj
+
+        # Build minimal collection
+        collection = {
+            "info": {
+                "name": "Formatify Export",
+                "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+                "_postman_id": "00000000-0000-0000-0000-000000000000"
+            },
+            "item": [
+                {
+                    "name": method + " " + url,
+                    "request": request_obj
+                }
+            ]
+        }
+
+        return json.dumps(collection, indent=2)
 
         # Made with Love by Sid Joshi
         # Find me at Linkedin: https://www.linkedin.com/in/sid-j0shi/
